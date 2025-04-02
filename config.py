@@ -14,7 +14,7 @@ env_vars = {
   # {chap_num}: Chapter Number
   # {chap_name} : Manga Name
   # Ex : Chapter {chap_num} {chap_name} @Manhwa_Arena
-  "FNAME": " [AS] {chap_num} {chap_name} @Manga_X_society
+  "FNAME": "{chap_num} {chap_name} @Manga_X_society
   # Put Thumb Link 
   "THUMB": "https://envs.sh/jlx.png?CxThB=1"
 }
