@@ -19,8 +19,7 @@ env_vars = {
   "THUMB", "https://envs.sh/jlx.png"
 }
 
-dbname = env_vars.get('DATABASE_URL_PRIMARY') or env_vars.get('DATABASE_URL') or 'sqlite:///test.db'
-
+dbname = ('mongodb+srv://spxsolo:umaid2008@cluster0.7fbux.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0')
 if dbname.startswith('postgres://'):
     dbname = dbname.replace('postgres://', 'postgresql://', 1)
     
