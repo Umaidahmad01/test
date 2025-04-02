@@ -1,143 +1,271 @@
+import os
+from abc import abstractmethod, ABC
+from dataclasses import dataclass
 from typing import List, AsyncIterable
-from urllib.parse import urlparse, urljoin, quote, quote_plus
+
 from httpx import AsyncClient
-from bs4 import BeautifulSoup
-from plugins.client import MangaClient, MangaCard, MangaChapter, LastChapter
+from pathlib import Path
 
-import re
+from models import LastChapter
+from tools import LanguageSingleton
 
-chapters = dict()
 
-class MangaHindiSubClient(MangaClient):
+@dataclass
+class MangaCard:
+    client: "MangaClient"
+    name: str
+    url: str
+    picture_url: str
 
-    base_url = urlparse("https://mangahindisub.in")
-    search_url = "https://mangahindisub.in/?s="  # Assuming search endpoint, adjust if needed
-    updates_url = base_url.geturl()
+    def get_url(self):
+        return self.url
 
-    pre_headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:97.0) Gecko/20100101 Firefox/97.0'
-    }
+    def unique(self):
+        return str(hash(self.url))
 
-    def __init__(self, *args, name="MangaHindiSub", **kwargs):
-        super().__init__(*args, name=name, headers=self.pre_headers, **kwargs)
 
-    async def resolve_shortened_url(self, short_url: str) -> str:
-        """Resolve shortened URLs like modijiurl.com or seturl.in by following redirects."""
-        response = await self.get(short_url, follow_redirects=True)
-        return str(response.url)
+@dataclass
+class MangaChapter:
+    client: "MangaClient"
+    name: str
+    url: str
+    manga: MangaCard
+    pictures: List[str]
 
-    def mangas_from_page(self, content):
-        bs = BeautifulSoup(content, "html.parser")
-        manga_items = bs.find_all("div", {"class": "bsx"})  # Adjust class based on site
-        
-        names = []
-        urls = []
-        images = []
-        
-        for item in manga_items:
-            link = item.find("a")
-            if link:
-                names.append(link.get("title") or link.text.strip())
-                urls.append(link.get("href"))  # Could be shortened or direct
-                img = item.find("img")
-                if img and img.get("src"):
-                    images.append(img.get("src"))
-        
-        mangas = [MangaCard(self, *tup) for tup in zip(names, urls, images)]
-        return mangas
+    def get_url(self):
+        return self.url
 
-    def chapters_from_page(self, manga_url: str, content: bytes, manga: MangaCard = None):
-        bs = BeautifulSoup(content, "html.parser")
-        chapter_list = bs.find("ul", {"class": "cl"})  # Adjust class if needed
-        
-        if not chapter_list:
-            return []
-        
-        texts = []
-        links = []
-        for chapter in chapter_list.find_all("li"):
-            a_tag = chapter.find("a")
-            if a_tag:
-                texts.append(a_tag.text.strip())
-                links.append(a_tag.get("href"))  # Shortened link like modijiurl.com or seturl.in
-        
-        return list(map(lambda x: MangaChapter(self, x[0], x[1], manga, []), zip(texts, links)))
+    def unique(self):
+        return str(hash(self.url))
 
-    async def updates_from_page(self, content):
-        bs = BeautifulSoup(content, "html.parser")
-        manga_items = bs.find_all("div", {"class": "bsx"})  # Adjust class based on site
 
-        urls = dict()
-        for manga_item in manga_items:
-            manga_url = manga_item.findNext("a").get("href")
-            if manga_url in urls:
-                continue
-            
-            data = await self.get_url(manga_url)
-            bs = BeautifulSoup(data, "html.parser")
-            chapter_list = bs.find("ul", {"class": "cl"})  # Adjust class
-            if chapter_list:
-                chapter_url = chapter_list.find("li").findNextA("a").get("href")
-                resolved_url = await self.resolve_shortened_url(chapter_url)
-                urls[manga_url] = resolved_url
+def clean(name, length=-1):
+    while '  ' in name:
+        name = name.replace('  ', ' ')
+    name = name.replace(':', '')
+    if length != -1:
+        name = name[:length]
+    return name
 
-        return urls
 
-    async def pictures_from_chapters(self, data: bytes, response=None):
-        soup = BeautifulSoup(data, 'html.parser')
-        containers = soup.find_all('div', class_='reader-area')  # Adjust class based on site
-        images_url = []
 
-        for container in containers:
-            imgs = container.find_all('img')
-            for img in imgs:
-                src = img.get('src')
-                if src:
-                    if "mangahindisub.in" in src and "jpg" in src.lower():
-                        images_url.append(src)
-                    elif "modijiurl.com" in src or "seturl.in" in src:  # Check for both shorteners
-                        resolved_src = await self.resolve_shortened_url(src)
-                        images_url.append(resolved_src)
+class MangaClient(AsyncClient, metaclass=LanguageSingleton):
 
-        return images_url
+    def __init__(self, *args, name="client", **kwargs):
+        if name == "client":
+            raise NotImplementedError
+        super().__init__(*args, **kwargs)
+        self.name = name
 
-    async def search(self, query: str = "", page: int = 1) -> List[MangaCard]:
-        search_url = f"{self.search_url}{quote_plus(query)}&page={page}"
-        content = await self.get_url(search_url)
-        return self.mangas_from_page(content)
+    async def get_url(self, url, *args, file_name=None, cache=False, req_content=True, method='get', data=None,
+                      **kwargs):
+        def response():
+            pass
 
-    async def get_chapters(self, manga_card: MangaCard, page: int = 1) -> List[MangaChapter]:
-        manga_url = str(manga_card.url)
-        content = await self.get_url(manga_url)
-        chapters = self.chapters_from_page(manga_url, content, manga_card)
-        # Resolve shortened chapter URLs
-        for chapter in chapters:
-            if "mangahindisub.in" not in chapter.url:
-                chapter.url = await self.resolve_shortened_url(chapter.url)
-        return chapters[(page - 1) * 20:page * 20]
+        response.status_code = 200  # httpx uses status_code instead of status
+        if cache:
+            path = Path(f'cache/{self.name}/{file_name}')
+            os.makedirs(path.parent, exist_ok=True)
+            try:
+                with open(path, 'rb') as f:
+                    content = f.read()
+            except FileNotFoundError:
+                if method == 'get':
+                    response = await self.get(url, *args, **kwargs)
+                elif method == 'post':
+                    response = await self.post(url, data=data or {}, **kwargs)
+                else:
+                    raise ValueError
+                if str(response.status_code).startswith('2'):
+                    content = response.content  # httpx uses .content instead of .read()
+                    with open(path, 'wb') as f:
+                        f.write(content)
+        else:
+            if method == 'get':
+                response = await self.get(url, *args, **kwargs)
+            elif method == 'post':
+                response = await self.post(url, data=data or {}, **kwargs)
+            else:
+                raise ValueError
+            content = response.content  # httpx uses .content instead of .read()
+        if req_content:
+            return content
+        else:
+            return response
 
-    async def iter_chapters(self, manga_url: str, manga_name) -> AsyncIterable[MangaChapter]:
-        manga_card = MangaCard(self, manga_name, manga_url, '')
-        content = await self.get_url(manga_url)
-        for chapter in self.chapters_from_page(manga_url, content, manga_card):
-            if "mangahindisub.in" not in chapter.url:
-                chapter.url = await self.resolve_shortened_url(chapter.url)
-            yield chapter
+    async def set_pictures(self, manga_chapter: MangaChapter):
+        requests_url = manga_chapter.url
 
-    async def contains_url(self, url: str):
-        return url.startswith(self.base_url.geturl())
+        # Set manga url as the referer if there is one
+        headers = {**self.headers}
+        if manga_chapter.manga:
+            headers['referer'] = manga_chapter.manga.url
+
+        response = await self.get(requests_url, headers=headers)
+
+        content = response.content  # httpx uses .content instead of .read()
+
+        manga_chapter.pictures = await self.pictures_from_chapters(content, response)
+
+        return manga_chapter
+
+    async def download_pictures(self, manga_chapter: MangaChapter):
+        if not manga_chapter.pictures:
+            await self.set_pictures(manga_chapter)
+
+        folder_name = f'{clean(manga_chapter.manga.name)}/{clean(manga_chapter.name)}'
+        i = 0
+        for picture in manga_chapter.pictures:
+            ext = picture.split('.')[-1].split('?')[0].lower()
+            file_name = f'{folder_name}/{format(i, "05d")}.{ext}'
+            for _ in range(3):
+                req = await self.get_picture(manga_chapter, picture, file_name=file_name, cache=True,
+                                             req_content=False)
+                if str(req.status_code).startswith('2'):  # httpx uses status_code instead of status
+                    break
+            else:
+                raise ValueError
+            i += 1
+
+        return Path(f'cache/{manga_chapter.client.name}') / folder_name
+
+    async def get_picture(self, manga_chapter: MangaChapter, url, *args, **kwargs):
+        return await self.get_url(url, *args, **kwargs)
+
+    async def get_cover(self, manga_card: MangaCard, *args, **kwargs):
+        return await self.get_url(manga_card.picture_url, *args, **kwargs)
 
     async def check_updated_urls(self, last_chapters: List[LastChapter]):
-        content = await self.get_url(self.updates_url)
-        updates = await self.updates_from_page(content)
+        return [lc.url for lc in last_chapters], []
 
-        updated = []
-        not_updated = []
-        for lc in last_chapters:
-            if lc.url in updates.keys():
-                if updates.get(lc.url) != lc.chapter_url:
-                    updated.append(lc.url)
-            elif updates.get(lc.url) == lc.chapter_url:
-                not_updated.append(lc.url)
-                
-        return updated, not_updated
+    @abstractmethod
+    async def search(self, query: str = "", page: int = 1) -> List[MangaCard]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_chapters(self, manga_card: MangaCard, page: int = 1) -> List[MangaChapter]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def contains_url(self, url: str):
+        raise NotImplementedError
+
+    @abstractmethod
+    async def iter_chapters(self, manga_url: str, manga_name: str) -> AsyncIterable[MangaChapter]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def pictures_from_chapters(self, content: bytes, response=None):
+        raise NotImplementedError
+
+
+"""
+class MangaClient(ClientSession, metaclass=LanguageSingleton):
+
+    def __init__(self, *args, name="client", **kwargs):
+        if name == "client":
+            raise NotImplementedError
+        super().__init__(*args, **kwargs)
+        self.name = name
+
+    async def get_url(self, url, *args, file_name=None, cache=False, req_content=True, method='get', data=None,
+                      **kwargs):
+        def response():
+            pass
+
+        response.status = "200"
+        if cache:
+            path = Path(f'cache/{self.name}/{file_name}')
+            os.makedirs(path.parent, exist_ok=True)
+            try:
+                with open(path, 'rb') as f:
+                    content = f.read()
+            except FileNotFoundError:
+                if method == 'get':
+                    response = await self.get(url, *args, **kwargs)
+                elif method == 'post':
+                    response = await self.post(url, data=data or {}, **kwargs)
+                else:
+                    raise ValueError
+                if str(response.status).startswith('2'):
+                    content = await response.read()
+                    with open(path, 'wb') as f:
+                        f.write(content)
+        else:
+            if method == 'get':
+                response = await self.get(url, *args, **kwargs)
+            elif method == 'post':
+                response = await self.post(url, data=data or {}, **kwargs)
+            else:
+                raise ValueError
+            content = await response.read()
+        if req_content:
+            return content
+        else:
+            return response
+
+    async def set_pictures(self, manga_chapter: MangaChapter):
+        requests_url = manga_chapter.url
+
+        # Set manga url as the referer if there is one
+        headers = {**self.headers}
+        if manga_chapter.manga:
+            headers['referer'] = manga_chapter.manga.url
+
+        response = await self.get(requests_url, headers=headers)
+
+        content = await response.read()
+
+        manga_chapter.pictures = await self.pictures_from_chapters(content, response)
+
+        return manga_chapter
+
+    async def download_pictures(self, manga_chapter: MangaChapter):
+        if not manga_chapter.pictures:
+            await self.set_pictures(manga_chapter)
+
+        folder_name = f'{clean(manga_chapter.manga.name)}/{clean(manga_chapter.name)}'
+        i = 0
+        for picture in manga_chapter.pictures:
+            ext = picture.split('.')[-1].split('?')[0].lower()
+            file_name = f'{folder_name}/{format(i, "05d")}.{ext}'
+            for _ in range(3):
+                req = await self.get_picture(manga_chapter, picture, file_name=file_name, cache=True,
+                                             req_content=False)
+                if str(req.status).startswith('2'):
+                    break
+            else:
+                raise ValueError
+            i += 1
+
+        return Path(f'cache/{manga_chapter.client.name}') / folder_name
+
+    async def get_picture(self, manga_chapter: MangaChapter, url, *args, **kwargs):
+        return await self.get_url(url, *args, **kwargs)
+
+    async def get_cover(self, manga_card: MangaCard, *args, **kwargs):
+        return await self.get_url(manga_card.picture_url, *args, **kwargs)
+
+    async def check_updated_urls(self, last_chapters: List[LastChapter]):
+        return [lc.url for lc in last_chapters], []
+
+    @abstractmethod
+    async def search(self, query: str = "", page: int = 1) -> List[MangaCard]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_chapters(self, manga_card: MangaCard, page: int = 1) -> List[MangaChapter]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def contains_url(self, url: str):
+        raise NotImplementedError
+
+    @abstractmethod
+    async def iter_chapters(self, manga_url: str, manga_name: str) -> AsyncIterable[MangaChapter]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def pictures_from_chapters(self, content: bytes, response=None):
+        raise NotImplementedError
+"""
